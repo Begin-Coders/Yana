@@ -317,6 +317,20 @@ async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Resources Gathered From:\n{flinks}")
 
 
+async def change2(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    change = update.message.text.replace("/browse", "")
+    logger.info(f"User {update.effective_user.first_name} changed to {change}")
+
+    send_message_to_chatgpt(CHANGE_2(change))
+    await application.bot.send_chat_action(update.effective_chat.id, "typing")
+    await checking_for_message_to_finish(update)
+    response = get_message_from_chatgpt()
+    if "\[prompt:" in response:
+        await respond_with_image(update, response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+    else:
+        await update.message.reply_text(response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+
+
 async def message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"User {update.effective_user.first_name} sent {update.message.text}.")
 
@@ -357,6 +371,7 @@ def telegram_elements(application: ApplicationBuilder) -> None:
     application.add_handler(CommandHandler("imagine", imagine))
     application.add_handler(CommandHandler("reload", reload))
     application.add_handler(CommandHandler("browse", browse))
+    application.add_handler(CommandHandler("change2", change2))
     application.add_handler(CommandHandler("help", help))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
 
