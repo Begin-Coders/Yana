@@ -37,6 +37,19 @@ where x is your attempt to create a StableDiffusion prompt per above instruction
 {update.message.text}
     """
 
+def MAKE_SEARCH(message: str) -> str:
+    return f"""
+If I ask you "{message}" , and you didn't know the answer but had access to google, what would you search for? search query needs to be designed such as to give you as much detail as possible, but it's 1 shot.
+Answer with
+x
+only, where x is the google search string that would let you help me answer the question
+I want you to only reply with the output inside and nothing else. Do no write explanations or anything else. Just the query
+examples:
+q: programming languages to learn
+a: top programming languages to learn in 2023
+q: petrol price today in tamilnadu erode
+a: petrol price <today date> in erode tamilnade
+    """
 
 def CHANGE_YOUR_SELF(update: telegram.Update) -> str:
     return f"""

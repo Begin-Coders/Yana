@@ -28,10 +28,13 @@ import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
 
 import openai
 
+from serpapi import GoogleSearch
+
 from dotenv import load_dotenv
 import os
 import time
 import random
+import json
 
 from settings import *
 from response import *
@@ -53,6 +56,55 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+
+# Serpapi Handler
+def parse_response(query: str, response_dict: str) -> tuple:
+    textual_response = f"Search results for `{query}`:\n"
+    links = []
+    if "related_questions" in response_dict:
+        textual_response += "Related Questions:\n"
+        for related_question in response_dict["related_questions"]:
+            textual_response += f"""
+Q: {related_question['question']}
+Snippet: {related_question.get('snippet', 'NA')}
+Date: {related_question.get('date', 'NA')}
+Link: {related_question.get('link', 'NA')}\n
+"""
+            links.append(str(related_question.get('link', 'NA')))
+            if "rich_list" in related_question:
+                textual_response += "List of info:\n"
+                for rich_list_item in related_question["rich_list"]:
+                    textual_response += f"""{rich_list_item['title']},"""
+
+    if "organic_results" in response_dict:
+        textual_response += "Organic Results:\n"
+        for organic_result in response_dict["organic_results"]:
+            textual_response += f"""
+Title: {organic_result.get('title', 'NA')}
+Date: {organic_result.get('date', 'NA')}
+Snippet: {organic_result.get('snippet', 'NA')}
+Link: {organic_result.get('link', 'NA')}\n
+"""
+            links.append(str(organic_result.get('link', 'NA')))
+    if "knowledge_graph" in response_dict:
+        textual_response += (
+            f"Knowledge Graph: {json.dumps(response_dict['knowledge_graph'])}"
+        )
+    return textual_response, links
+
+
+def respond_with_google_search(query: str) -> tuple:
+    params = {"q": query, "hl": "en", "gl": "us", "api_key": os.getenv("SERPAPI_API_KEY")}
+
+    search = GoogleSearch(params)
+    results = search.get_dict()
+    # logger.info(f"Got google search results for {query}")
+    # logger.info(json.dumps(results, indent=2))
+
+    parsed_response, links = parse_response(query, results)
+    # logger.info(parsed_response)
+    return parsed_response, links
 
 
 # DreamStudio Handler
@@ -198,19 +250,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     help_button = KeyboardButton("Help")
     imagine_button = KeyboardButton("Imagine")
     keyboard = [[imagine_button, help_button]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    reply_markup = ReplyKeyboardMarkup(
+        keyboard, resize_keyboard=True, one_time_keyboard=False
+    )
 
     user = update.effective_user
-    await update.message.reply_html(
-        WELCOME_TEXT(user),
-        reply_markup=reply_markup
-    )
+    await update.message.reply_html(WELCOME_TEXT(user), reply_markup=reply_markup)
 
 
 async def imagine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"User {update.effective_user.first_name} drew {update.message.text}.")
 
-    send_message_to_chatgpt(MAKE_DRAW(update))
+    send_message_to_chatgpt(MAKE_DRAW(update).replace('\n', ' '))
     await checking_for_message_to_finish(update)
     response = get_message_from_chatgpt()
     if "\[prompt:" in response:
@@ -230,7 +281,40 @@ async def reload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"User {update.effective_user.first_name} asked help!")
 
-    await update.message.reply_text("<text> - Send any text, our assistent will reply you.\n/imagine <text> - Will generate a image\n/reload - Reload the browser")
+    await update.message.reply_text(
+        "<text> - Send any text, our assistent will reply you.\n/imagine <text> - Will generate a image\n/reload - Reload the browser"
+    )
+
+
+async def browse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message.text.replace("/browse", "")
+    logger.info(f"User {update.effective_user.first_name} browsed {message}")
+
+    await application.bot.send_chat_action(update.effective_chat.id, "typing")
+    send_message_to_chatgpt(MAKE_SEARCH(message).replace('\n', ' '))
+    await checking_for_message_to_finish(update)
+    response = get_message_from_chatgpt()
+    # logger.info(f"Clean response from chatGPT {response}")
+
+    results, links = respond_with_google_search(response)
+    # print(results)
+    prompt = f"""
+    Pretend I was able to run a google search for "{message}" instead of you and I got the following results:
+    \"\"\"
+    {results}
+    \"\"\"
+    Provide a summary of the new facts in a code block, in markdown format
+    Then in another code block, answer the question {message} with the new facts you just learned
+    """
+    send_message_to_chatgpt(prompt.replace('\n', ' '))
+    await checking_for_message_to_finish(update)
+    response = get_message_from_chatgpt()
+    if "\[prompt:" in response:
+        await respond_with_image(update, response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+    else:
+        await update.message.reply_text(response, parse_mode=telegram.constants.ParseMode.MARKDOWN_V2)
+    flinks = "\n".join(links)
+    await update.message.reply_text(f"Resources Gathered From:\n{flinks}")
 
 
 async def message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -272,6 +356,7 @@ def telegram_elements(application: ApplicationBuilder) -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("imagine", imagine))
     application.add_handler(CommandHandler("reload", reload))
+    application.add_handler(CommandHandler("browse", browse))
     application.add_handler(CommandHandler("help", help))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
 
@@ -282,8 +367,8 @@ def browser_startup() -> None:
         pass
 
     else:
-        for _ in range(random.randrange(3, len(WEBSITES))):
-            driver.get(random.choice(WEBSITES))
+        # for _ in range(random.randrange(3, len(WEBSITES))):
+        #     driver.get(random.choice(WEBSITES))
         driver.get("https://chat.openai.com/")
 
         try:
@@ -386,7 +471,7 @@ def browser_startup() -> None:
                 except:
                     pass
         time.sleep(3)
-        # send_message_to_chatgpt(CHANGE_YOUR_SELF(Update))
+    send_message_to_chatgpt(CHANGE_YOUR_SELF(Update))
     logger.info("Logged in!!")
 
 
@@ -409,7 +494,7 @@ if __name__ == "__main__":
     options.arguments.extend(["--no-sandbox", "--disable-setuid-sandbox"])
     if HEADLESS_MODE:
         options.headless = HEADLESS_MODE
-        options.add_argument('--headless')
+        options.add_argument("--headless")
     driver = uc.Chrome(options)
 
     # Bot Setup
