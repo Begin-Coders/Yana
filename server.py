@@ -30,14 +30,24 @@ import openai
 
 from serpapi import GoogleSearch
 
+import requests
+from bs4 import BeautifulSoup
+
 from dotenv import load_dotenv
 import os
 import time
 import random
 import json
 
+from threading import Lock
+
 from settings import *
 from response import *
+
+
+# Threading Setup
+lock = Lock()
+
 
 # Env Setup
 load_dotenv()
@@ -354,7 +364,7 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(response["choices"][0]["text"].strip())
 
     else:
-        send_message_to_chatgpt(update.message.text)
+        send_message_to_chatgpt(update.message.text.replace('\n', ' '))
         await checking_for_message_to_finish(update)
         response = get_message_from_chatgpt()
         if "\[prompt:" in response:
@@ -365,6 +375,39 @@ async def message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
 
 
+async def ailist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info(f"User {update.effective_user.first_name} asked apis")
+    await application.bot.send_chat_action(update.effective_chat.id, "typing")
+    tags_n5zn = ['ai-detection', 'aggregators', 'avatar', 'chat', 'copywriting', 'finance', 'for-fun', 'gaming', 'generative-art', 'generative-code', 'generative-video', 'image-improvement', 'image-scanning', 'inspiration', 'marketing', 'motion-capture', 'music', 'podcasting', 'productivity', 'prompt-guides', 'research', 'self-improvement', 'social-media', 'speech-to-text', 'text-to-speech', 'text-to-video', 'translation', 'video-editing', 'voice-modulation']
+    pricing_model = ['free', 'freemium', 'github', 'google-colab', 'open-source', 'paid']
+    split_messages = update.message.text.split(" ")
+    try:
+        count = int(message[1])
+    except Exception:
+        count = 10
+    url = "https://www.futuretools.io/"
+    tags = [message for message in split_messages[1:] if message in tags_n5zn]
+    pricing = [message for message in split_messages[1:] if message in pricing_model]
+    if tags:
+        url += f"?tags-n5zn={'%7C'.join(tags)}"
+    if pricing:
+        if tags:
+            url += "&"
+        else:
+            url += "?"
+        url += f"pricing-model={'%7C'.join(pricing)}"
+    response = requests.get(url=url)
+    soup = BeautifulSoup(response.content, "html.parser")
+    elements = soup.find_all("div", {"class": "tool-item-columns---new w-row"})
+    random.shuffle(elements)
+    for element in elements[:count if count < len(elements) else len(elements) if count > len(elements) else 10]:
+        img = element.find("img")["src"]
+        text = element.find("a", {"class": "tool-item-link---new"}).text
+        link = element.find("a", {"class": "tool-item-new-window---new w-inline-block"})["href"]
+        description = element.find("div", {"class": "tool-item-description-box---new"}).text
+        result = f"<b>{text}</b>\n<a href='{link}'>&#128279;</a>\n\n{img}\n\n{description}\n\n<a href='{link}'>&#127760;</a>"
+        await update.message.reply_text(result, telegram.constants.ParseMode.HTML)
+
 # Telegram Elements
 def telegram_elements(application: ApplicationBuilder) -> None:
     application.add_handler(CommandHandler("start", start))
@@ -372,6 +415,7 @@ def telegram_elements(application: ApplicationBuilder) -> None:
     application.add_handler(CommandHandler("reload", reload))
     application.add_handler(CommandHandler("browse", browse))
     application.add_handler(CommandHandler("change2", change2))
+    application.add_handler(CommandHandler("ai", ailist))
     application.add_handler(CommandHandler("help", help))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
 
@@ -486,7 +530,7 @@ def browser_startup() -> None:
                 except:
                     pass
         time.sleep(3)
-    send_message_to_chatgpt(CHANGE_YOUR_SELF(Update))
+    # send_message_to_chatgpt(CHANGE_YOUR_SELF(Update))
     logger.info("Logged in!!")
 
 
